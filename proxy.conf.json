@@ -1,0 +1,7 @@
+{
+  "/api": {
+    "target": "https://1klas.eu",
+    "secure": true,
+    "changeOrigin": true
+  }
+}

@@ -1,0 +1,13 @@
+<igx-grid [data]="dataService.admissionResults()" [autoGenerate]="false" [allowFiltering]="true" [isLoading]="dataService.loading()">
+  <ng-template igxGroupByRow let-groupRow>
+    <span>{{ groupRow.value }} ({{ countAdmitted(groupRow.records) }}/{{ groupRow.records[0]?.schoolCapacity }})</span>
+  </ng-template>
+  <igx-column [resizable]="true" field="schoolName" header="Училище" [groupable]="true"></igx-column>
+  <igx-column [resizable]="true" field="name" header="Име"></igx-column>
+  <igx-column [resizable]="true" field="childNum" header="Номер на дете"></igx-column>
+  <igx-column [resizable]="true" field="points" header="Точки" [dataType]="'number'"></igx-column>
+  <igx-column [resizable]="true" field="wishOrder" header="Желание №" [dataType]="'number'"></igx-column>
+  <igx-column [resizable]="true" field="order" header="Класиране" [dataType]="'number'"></igx-column>
+  <igx-column [resizable]="true" field="displayText" header="Група"></igx-column>
+  <igx-column [resizable]="true" field="admitted" header="Приет" [dataType]="'boolean'"></igx-column>
+</igx-grid>

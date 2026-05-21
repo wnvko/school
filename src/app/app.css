@@ -1,0 +1,63 @@
+.app-layout {
+  display: flex;
+  height: 100vh;
+}
+
+.app-content {
+  flex: 1;
+  overflow: auto;
+}
+
+.drawer-content {
+  display: flex;
+  flex-direction: column;
+  padding: 8px;
+  gap: 16px;
+  overflow-y: auto;
+  height: 100%;
+}
+
+.child-search {
+  padding: 0 8px;
+}
+
+.child-search h4,
+.wishes-list h4 {
+  margin: 8px 0;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.wishes-list {
+  padding: 0 8px;
+}
+
+.wish-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 0;
+  font-size: 12px;
+}
+
+.wish-order {
+  min-width: 20px;
+  font-weight: bold;
+}
+
+.wish-school {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wish-actions {
+  display: flex;
+  gap: 0;
+}
+
+.recalc-btn {
+  margin-top: 8px;
+  width: 100%;
+}
