@@ -1,19 +1,14 @@
 <div class="school-selector">
-  <igx-simple-combo
-    [data]="dataService.schools()"
-    [displayKey]="'name'"
-    [valueKey]="'id'"
-    [disabled]="dataService.loading()"
-    placeholder="Изберете училище"
-    (selectionChanging)="onSchoolSelected($event)">
+  <igx-simple-combo [data]="dataService.schools()" [displayKey]="'name'" [valueKey]="'id'"
+    [disabled]="dataService.loading()" placeholder="Изберете училище" (selectionChanging)="onSchoolSelected($event)">
   </igx-simple-combo>
   @if (schoolHeader()) {
-    <span class="school-header">{{ schoolHeader() }}</span>
+  <span class="school-header">{{ schoolHeader() }}</span>
   }
 </div>
 
-<igx-grid [data]="schoolChildren()" [autoGenerate]="false" [allowFiltering]="true"
-          [isLoading]="dataService.loading()" [primaryKey]="'childNum'">
+<igx-grid [data]="schoolChildren()" [autoGenerate]="false" [allowFiltering]="true" [filterMode]="'excelStyleFilter'"
+  [isLoading]="dataService.loading()" [primaryKey]="'childNum'" [rowClasses]="rowClasses">
 
   <ng-template igxGridDetail let-dataItem>
     <div class="child-details">
@@ -26,31 +21,35 @@
             <th>Група</th>
             <th>Точки</th>
             <th>Класиране</th>
-            <th>Приет</th>
+            <th>Статус</th>
           </tr>
         </thead>
         <tbody>
           @for (wish of getChildWishes(dataItem.childNum); track wish.schoolId) {
-            <tr [class.admitted-row]="wish.admitted">
-              <td>{{ wish.wishOrder }}</td>
-              <td>{{ wish.schoolName }}</td>
-              <td>{{ wish.group }}</td>
-              <td>{{ wish.points }}</td>
-              <td>{{ wish.order }}</td>
-              <td>{{ wish.admitted ? '✔ Да' : '✘ Не' }}</td>
-            </tr>
+          <tr [class]="'status-' + wish.admissionStatus">
+            <td>{{ wish.wishOrder }}</td>
+            <td>{{ wish.schoolName }}</td>
+            <td>{{ wish.group }}</td>
+            <td>{{ wish.points }}</td>
+            <td>{{ wish.order }}</td>
+            <td>{{ formatStatus(wish.admissionStatus, wish.chance) }}</td>
+          </tr>
           }
         </tbody>
       </table>
     </div>
   </ng-template>
 
-  <igx-column [resizable]="true" field="name" header="Име"></igx-column>
-  <igx-column [resizable]="true" field="childNum" header="Номер на дете"></igx-column>
-  <igx-column [resizable]="true" field="group" header="Група №" [dataType]="'number'"></igx-column>
-  <igx-column [resizable]="true" field="points" header="Точки" [dataType]="'number'"></igx-column>
-  <igx-column [resizable]="true" field="wishOrder" header="Желание №" [dataType]="'number'"></igx-column>
-  <igx-column [resizable]="true" field="order" header="Класиране" [dataType]="'number'"></igx-column>
-  <igx-column [resizable]="true" field="displayText" header="Описание на група"></igx-column>
-  <igx-column [resizable]="true" field="admitted" header="Приет" [dataType]="'boolean'"></igx-column>
+  <igx-column [width]="'150px'" [resizable]="true" field="name" header="Име"></igx-column>
+  <igx-column [width]="'200px'" [resizable]="true" field="childNum" header="Номер на дете"></igx-column>
+  <igx-column [width]="'150px'" [resizable]="true" field="group" header="Група №" [dataType]="'number'"></igx-column>
+  <igx-column [width]="'150px'" [resizable]="true" field="points" header="Точки" [dataType]="'number'"></igx-column>
+  <igx-column [width]="'150px'" [resizable]="true" field="wishOrder" header="Желание №" [dataType]="'number'"></igx-column>
+  <igx-column [width]="'150px'" [resizable]="true" field="order" header="Позиция" [dataType]="'number'"></igx-column>
+  <igx-column [width]="'300px'" [resizable]="true" field="displayText" header="Описание на група"></igx-column>
+  <igx-column [resizable]="true" header="Статус">
+    <ng-template igxCell let-cell="cell">
+      {{ formatStatus(cell.row.data.admissionStatus, cell.row.data.chance) }}
+    </ng-template>
+  </igx-column>
 </igx-grid>

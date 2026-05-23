@@ -6,7 +6,39 @@
           <span igxDrawerItem routerLink="/collect-data" igxRipple>
             <span>Всички данни</span>
           </span>
+          <span igxDrawerItem igxRipple (click)="startCollection()" [class.disabled]="collectStatus() === 'collecting'">
+            <igx-icon>cloud_download</igx-icon>
+            <span>Събиране на данни</span>
+          </span>
+          <div class="lottery-switch">
+            <igx-switch
+              [checked]="dataService.lotteryMode()"
+              [disabled]="collectStatus() === 'collecting' || dataService.loading() || dataService.admissionResults().length === 0"
+              (change)="toggleLottery()">
+              Симулирай класиране
+            </igx-switch>
+          </div>
         </nav>
+
+        @if (collectStatus() !== 'idle') {
+          <div class="collect-progress">
+            @if (collectStatus() === 'collecting') {
+              <div class="progress-info">
+                <span>{{ collectMessage() }}</span>
+                @if (collectTotal() > 0) {
+                  <progress [value]="collectCurrent()" [max]="collectTotal()"></progress>
+                  <span class="progress-numbers">{{ collectCurrent() }} / {{ collectTotal() }}</span>
+                }
+              </div>
+            }
+            @if (collectStatus() === 'done') {
+              <div class="progress-done">{{ collectMessage() }}</div>
+            }
+            @if (collectStatus() === 'error') {
+              <div class="progress-error">Грешка: {{ collectMessage() }}</div>
+            }
+          </div>
+        }
 
         <div class="child-search">
           <h4>Търсене на дете</h4>

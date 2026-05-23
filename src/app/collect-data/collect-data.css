@@ -57,3 +57,31 @@ igx-grid {
   background: #e8f5e9;
   font-weight: 500;
 }
+
+/* Grid row colors by admission status */
+:host ::ng-deep .row-guaranteed {
+  background: #e8f5e9 !important;
+}
+:host ::ng-deep .row-elsewhere {
+  background: #e3f2fd !important;
+}
+:host ::ng-deep .row-chance {
+  background: #fff9c4 !important;
+}
+:host ::ng-deep .row-impossible {
+  background: #ffebee !important;
+}
+
+/* Detail table row colors */
+.wishes-table .status-guaranteed {
+  background: #e8f5e9;
+}
+.wishes-table .status-admitted-elsewhere {
+  background: #e3f2fd;
+}
+.wishes-table .status-chance {
+  background: #fff9c4;
+}
+.wishes-table .status-impossible {
+  background: #ffebee;
+}

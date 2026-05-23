@@ -61,3 +61,51 @@
   margin-top: 8px;
   width: 100%;
 }
+
+/* Collect data button */
+nav [igxDrawerItem] {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+
+nav [igxDrawerItem].disabled {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+/* Collection progress */
+.collect-progress {
+  padding: 0 8px;
+  font-size: 12px;
+}
+
+.progress-info {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.progress-info progress {
+  width: 100%;
+  height: 6px;
+}
+
+.progress-numbers {
+  color: #666;
+}
+
+.progress-done {
+  color: #2e7d32;
+  font-weight: 500;
+}
+
+.progress-error {
+  color: #c62828;
+  font-weight: 500;
+}
+
+.lottery-switch {
+  padding: 4px 16px;
+}

@@ -24,6 +24,7 @@ export class Data {
   schools = signal<{ id: number; name: string; free: number }[]>([]);
   uniqueChildren = signal<{ childNum: number; label: string }[]>([]);
   loading = signal(false);
+  lotteryMode = signal(false);
 
   getSchools(): Observable<School[]> {
     return this.http.get<SchoolsResponse>('/api/schools').pipe(
@@ -141,9 +142,43 @@ export class Data {
       .sort((a, b) => a.wishOrder - b.wishOrder);
   }
 
+  /** Изчиства кеша преди събиране на данни */
+  clearForCollection(): void {
+    this.cachedSchoolMap = null;
+    this.cachedEntries = null;
+    this.admissionResults.set([]);
+    this.schools.set([]);
+    this.uniqueChildren.set([]);
+    this.loading.set(true);
+    this.lotteryMode.set(false);
+  }
+
+  /** Превключва между режим на лотария и вероятностен режим */
+  toggleLottery(): void {
+    if (!this.cachedEntries || !this.cachedSchoolMap) return;
+    const newMode = !this.lotteryMode();
+    this.lotteryMode.set(newMode);
+    this.loading.set(true);
+    setTimeout(() => {
+      if (newMode) {
+        this.runLottery();
+      } else {
+        const results = this.simulateAdmission(this.cachedEntries!, this.cachedSchoolMap!);
+        this.admissionResults.set(results);
+      }
+      this.loading.set(false);
+    });
+  }
+
+  /** Презарежда данните след събиране */
+  reload(): void {
+    this.cachedSchoolMap = null;
+    this.cachedEntries = null;
+    this.fetchAndSimulate().subscribe();
+  }
+
   /**
    * Извличане на номера на групата от displayText.
-   * Групите са от 1 (Първа) до 4 (Четвърта). Ако не се разпознае — връща 5.
    */
   private extractGroup(displayText: string): number {
     if (displayText.includes('Първа група')) return 1;
@@ -154,23 +189,15 @@ export class Data {
   }
 
   /**
-   * Симулация на класирането по алгоритъма от Наредбата
-   * (https://kg.sofia.bg/#/faq/114):
+   * Симулация на класирането.
    *
-   * 1. За ВСЯКО училище поотделно, кандидатите се подреждат по:
-   *    - Група (1→4, по-малка = по-висок приоритет)
-   *    - Точки от допълнителни критерии (низходящо)
-   *    - При равенство (гранична група) — по азбучен ред на името
-   *
-   * 2. Итеративно класиране:
-   *    - За всяко училище се приемат top-N кандидати, като се пропускат
-   *      вече класирани на по-високо желание деца.
-   *    - Ако дете се класира на по-високо желание, освобождава място
-   *      в по-ниското, което се запълва от следващия в реда.
-   *    - Повтаря се до стабилизиране.
-   *
-   * Резултатът съдържа ПО ЕДИН запис за ВСЯКО желание на ВСЯКО дете,
-   * с admitted=true/false за всяко.
+   * Итеративен алгоритъм:
+   * 1. За всяко училище кандидатите се подреждат по група (възх.) и точки (низх.).
+   * 2. Граничната позиция определя кои са гарантирани / шанс / невъзможни.
+   * 3. Деца, гарантирани на по-предно желание, се маркират 'admitted-elsewhere'
+   *    и се изключват от списъците на по-задните училища.
+   * 4. Стъпки 2-3 се повтарят докато няма промяна (деца, напуснали училище,
+   *    освобождават места и могат да превърнат 'chance' в 'guaranteed').
    */
   private simulateAdmission(
     allEntries: Child[],
@@ -184,18 +211,17 @@ export class Data {
       entriesBySchool.set(entry.schoolId, list);
     }
 
-    // Sort candidates per school: group asc → points desc → name alphabetical (bg)
+    // Sort candidates per school: group asc → points desc
     for (const [, entries] of entriesBySchool) {
       entries.sort((a, b) => {
-        const groupA = this.extractGroup(a.displayText);
-        const groupB = this.extractGroup(b.displayText);
-        if (groupA !== groupB) return groupA - groupB;
-        if (a.points !== b.points) return b.points - a.points;
-        return a.name.localeCompare(b.name, 'bg');
+        const gA = this.extractGroup(a.displayText);
+        const gB = this.extractGroup(b.displayText);
+        if (gA !== gB) return gA - gB;
+        return b.points - a.points;
       });
     }
 
-    // Group all entries by child for wish priority lookups
+    // Group entries by child
     const entriesByChild = new Map<number, Child[]>();
     for (const entry of allEntries) {
       const list = entriesByChild.get(entry.childNum) ?? [];
@@ -203,60 +229,142 @@ export class Data {
       entriesByChild.set(entry.childNum, list);
     }
 
-    // Iterative placement: placed maps childNum -> schoolId
-    const placed = new Map<number, number>();
+    // Sort each child's entries by wish order
+    for (const [, entries] of entriesByChild) {
+      entries.sort((a, b) => a.wishOrder - b.wishOrder);
+    }
 
-    let changed = true;
-    while (changed) {
-      changed = false;
+    // Iterative resolution: remove admitted-elsewhere children and re-analyze
+    // until stable (max 50 iterations as safety net)
+    interface SchoolAnalysis { guaranteed: Set<number>; chance: Set<number>; chanceProb: number }
+    let analysis = new Map<number, SchoolAnalysis>();
+    const excludedFromSchool = new Map<number, Set<number>>(); // schoolId → set of childNums to exclude
 
-      for (const [schoolId, candidates] of entriesBySchool) {
+    for (let iteration = 0; iteration < 50; iteration++) {
+      analysis = new Map<number, SchoolAnalysis>();
+
+      for (const [schoolId, allCandidates] of entriesBySchool) {
         const capacity = schoolMap.get(schoolId)?.free ?? 0;
-        let spotsUsed = 0;
+        const excluded = excludedFromSchool.get(schoolId);
+        const candidates = excluded
+          ? allCandidates.filter(c => !excluded.has(c.childNum))
+          : allCandidates;
+        const guaranteed = new Set<number>();
+        const chance = new Set<number>();
 
-        for (const candidate of candidates) {
-          if (spotsUsed >= capacity) break;
+        if (capacity === 0 || candidates.length === 0) {
+          analysis.set(schoolId, { guaranteed, chance, chanceProb: 0 });
+          continue;
+        }
 
-          const existingSchoolId = placed.get(candidate.childNum);
+        if (capacity >= candidates.length) {
+          for (const c of candidates) guaranteed.add(c.childNum);
+          analysis.set(schoolId, { guaranteed, chance, chanceProb: 100 });
+          continue;
+        }
 
-          if (existingSchoolId === schoolId) {
-            // Already placed here — count towards capacity
-            spotsUsed++;
-            continue;
+        // Boundary = last person within capacity
+        const bCandidate = candidates[capacity - 1];
+        const bGroup = this.extractGroup(bCandidate.displayText);
+        const bPoints = bCandidate.points;
+
+        for (const c of candidates) {
+          const cGroup = this.extractGroup(c.displayText);
+          if (cGroup < bGroup || (cGroup === bGroup && c.points > bPoints)) {
+            guaranteed.add(c.childNum);
+          } else if (cGroup === bGroup && c.points === bPoints) {
+            chance.add(c.childNum);
           }
+        }
 
-          if (existingSchoolId !== undefined) {
-            // Already placed at another school — compare wish orders
-            const childEntries = entriesByChild.get(candidate.childNum)!;
-            const thisWish = childEntries.find(e => e.schoolId === schoolId)?.wishOrder ?? Infinity;
-            const existingWish = childEntries.find(e => e.schoolId === existingSchoolId)?.wishOrder ?? Infinity;
+        const remainingSpots = capacity - guaranteed.size;
+        const prob = chance.size > 0 ? Math.round((remainingSpots / chance.size) * 100) : 0;
+        analysis.set(schoolId, { guaranteed, chance, chanceProb: Math.min(prob, 100) });
+      }
 
-            if (thisWish >= existingWish) {
-              // Already at an equal or higher wish school — skip without using a spot
-              continue;
+      // Determine where each child is guaranteed (highest wish)
+      const guaranteedAt = new Map<number, number>(); // childNum → schoolId
+      for (const [childNum, entries] of entriesByChild) {
+        for (const entry of entries) {
+          if (analysis.get(entry.schoolId)?.guaranteed.has(childNum)) {
+            guaranteedAt.set(childNum, entry.schoolId);
+            break;
+          }
+        }
+      }
+
+      // Build exclusion lists: children guaranteed at a higher wish
+      // should be excluded from lower-wish schools
+      let changed = false;
+      for (const [childNum, gSchoolId] of guaranteedAt) {
+        const entries = entriesByChild.get(childNum)!;
+        const gWish = entries.find(e => e.schoolId === gSchoolId)!.wishOrder;
+        for (const entry of entries) {
+          if (entry.wishOrder > gWish) {
+            let set = excludedFromSchool.get(entry.schoolId);
+            if (!set) {
+              set = new Set();
+              excludedFromSchool.set(entry.schoolId, set);
             }
-
-            // This school is a higher wish — move child here
-            placed.set(candidate.childNum, schoolId);
-            spotsUsed++;
-            changed = true;
-          } else {
-            // Not placed anywhere — place here
-            placed.set(candidate.childNum, schoolId);
-            spotsUsed++;
+            if (!set.has(childNum)) {
+              set.add(childNum);
+              changed = true;
+            }
           }
+        }
+      }
+
+      if (!changed) break;
+    }
+
+    // Final guaranteedAt after convergence
+    const guaranteedAt = new Map<number, number>();
+    for (const [childNum, entries] of entriesByChild) {
+      for (const entry of entries) {
+        if (analysis.get(entry.schoolId)?.guaranteed.has(childNum)) {
+          guaranteedAt.set(childNum, entry.schoolId);
+          break;
         }
       }
     }
 
-    // Build full results: one row per child-wish combination
+    // Build results
     const results: AdmissionResult[] = [];
-    for (const [childNum, entries] of entriesByChild) {
+    for (const [, entries] of entriesByChild) {
       for (const entry of entries) {
         const school = schoolMap.get(entry.schoolId);
+        const a = analysis.get(entry.schoolId)!;
+        const gSchool = guaranteedAt.get(entry.childNum);
+
+        let admissionStatus: AdmissionResult['admissionStatus'];
+        let chance = 0;
+
+        if (gSchool === entry.schoolId) {
+          admissionStatus = 'guaranteed';
+        } else if (gSchool !== undefined) {
+          const gWish = entriesByChild.get(entry.childNum)!.find(e => e.schoolId === gSchool)!.wishOrder;
+          if (entry.wishOrder > gWish) {
+            admissionStatus = 'admitted-elsewhere';
+          } else if (a.chance.has(entry.childNum)) {
+            admissionStatus = 'chance';
+            chance = a.chanceProb;
+          } else if (a.guaranteed.has(entry.childNum)) {
+            admissionStatus = 'guaranteed';
+          } else {
+            admissionStatus = 'impossible';
+          }
+        } else if (a.guaranteed.has(entry.childNum)) {
+          admissionStatus = 'guaranteed';
+        } else if (a.chance.has(entry.childNum)) {
+          admissionStatus = 'chance';
+          chance = a.chanceProb;
+        } else {
+          admissionStatus = 'impossible';
+        }
+
         results.push({
           childNum: entry.childNum,
-          name: entry.name,
+          name: entry.name.replaceAll(' ', ''),
           schoolId: entry.schoolId,
           schoolName: school?.nameStr ?? `Училище ${entry.schoolId}`,
           schoolCapacity: school?.free ?? 0,
@@ -264,13 +372,14 @@ export class Data {
           wishOrder: entry.wishOrder,
           order: entry.order,
           group: this.extractGroup(entry.displayText),
-          displayText: entry.displayText,
-          admitted: placed.get(childNum) === entry.schoolId,
+          displayText: entry.displayText.replaceAll('</br>', '. '),
+          admitted: admissionStatus === 'guaranteed',
+          admissionStatus,
+          chance,
         });
       }
     }
 
-    // Sort: by child name, then by wish order
     results.sort((a, b) => {
       if (a.schoolName !== b.schoolName) return a.schoolName.localeCompare(b.schoolName, 'bg');
       if (a.group !== b.group) return a.group - b.group;
@@ -279,5 +388,155 @@ export class Data {
     });
 
     return results;
+  }
+
+  /**
+   * Симулация на лотария: за всяко дете в зоната на шанса се генерира
+   * случайно число. Децата с най-малко число печелят местата.
+   * След лотарията се пуска пълно итеративно класиране.
+   */
+  private runLottery(): void {
+    const allEntries = this.cachedEntries!;
+    const schoolMap = this.cachedSchoolMap!;
+
+      // Group by school, sort
+      const entriesBySchool = new Map<number, Child[]>();
+      for (const entry of allEntries) {
+        const list = entriesBySchool.get(entry.schoolId) ?? [];
+        list.push(entry);
+        entriesBySchool.set(entry.schoolId, list);
+      }
+      for (const [, entries] of entriesBySchool) {
+        entries.sort((a, b) => {
+          const gA = this.extractGroup(a.displayText);
+          const gB = this.extractGroup(b.displayText);
+          if (gA !== gB) return gA - gB;
+          return b.points - a.points;
+        });
+      }
+
+      // Assign random numbers to lottery candidates per school
+      // lotteryNumber: childNum → random (global, one per child)
+      const lotteryNumber = new Map<number, number>();
+
+      for (const [schoolId, candidates] of entriesBySchool) {
+        const capacity = schoolMap.get(schoolId)?.free ?? 0;
+        if (capacity === 0 || capacity >= candidates.length) continue;
+
+        const bCandidate = candidates[capacity - 1];
+        const bGroup = this.extractGroup(bCandidate.displayText);
+        const bPoints = bCandidate.points;
+
+        for (const c of candidates) {
+          const cGroup = this.extractGroup(c.displayText);
+          if (cGroup === bGroup && c.points === bPoints && !lotteryNumber.has(c.childNum)) {
+            lotteryNumber.set(c.childNum, Math.random());
+          }
+        }
+      }
+
+      // Now sort per school: guaranteed first, then lottery winners by random number
+      for (const [schoolId, candidates] of entriesBySchool) {
+        const capacity = schoolMap.get(schoolId)?.free ?? 0;
+        if (capacity === 0 || capacity >= candidates.length) continue;
+
+        const bCandidate = candidates[capacity - 1];
+        const bGroup = this.extractGroup(bCandidate.displayText);
+        const bPoints = bCandidate.points;
+
+        candidates.sort((a, b) => {
+          const gA = this.extractGroup(a.displayText);
+          const gB = this.extractGroup(b.displayText);
+          if (gA !== gB) return gA - gB;
+          if (a.points !== b.points) return b.points - a.points;
+          // Within lottery zone: sort by random number
+          const aLottery = (gA === bGroup && a.points === bPoints);
+          const bLottery = (gB === bGroup && b.points === bPoints);
+          if (aLottery && bLottery) {
+            return (lotteryNumber.get(a.childNum) ?? 0) - (lotteryNumber.get(b.childNum) ?? 0);
+          }
+          return 0;
+        });
+      }
+
+      // Now run iterative placement with the sorted order
+      const entriesByChild = new Map<number, Child[]>();
+      for (const entry of allEntries) {
+        const list = entriesByChild.get(entry.childNum) ?? [];
+        list.push(entry);
+        entriesByChild.set(entry.childNum, list);
+      }
+
+      const placed = new Map<number, number>();
+      let changed = true;
+      while (changed) {
+        changed = false;
+        for (const [schoolId, candidates] of entriesBySchool) {
+          const capacity = schoolMap.get(schoolId)?.free ?? 0;
+          let spotsUsed = 0;
+          for (const candidate of candidates) {
+            if (spotsUsed >= capacity) break;
+            const existing = placed.get(candidate.childNum);
+            if (existing === schoolId) { spotsUsed++; continue; }
+            if (existing !== undefined) {
+              const thisWish = entriesByChild.get(candidate.childNum)!.find(e => e.schoolId === schoolId)?.wishOrder ?? Infinity;
+              const existingWish = entriesByChild.get(candidate.childNum)!.find(e => e.schoolId === existing)?.wishOrder ?? Infinity;
+              if (thisWish >= existingWish) continue;
+              placed.set(candidate.childNum, schoolId);
+              spotsUsed++;
+              changed = true;
+            } else {
+              placed.set(candidate.childNum, schoolId);
+              spotsUsed++;
+            }
+          }
+        }
+      }
+
+      // Build results with lottery outcomes
+      const results: AdmissionResult[] = [];
+      for (const [, entries] of entriesByChild) {
+        for (const entry of entries) {
+          const school = schoolMap.get(entry.schoolId);
+          const placedSchool = placed.get(entry.childNum);
+          const isPlacedHere = placedSchool === entry.schoolId;
+          const isPlacedElsewhere = placedSchool !== undefined && placedSchool !== entry.schoolId;
+          let admissionStatus: AdmissionResult['admissionStatus'];
+
+          if (isPlacedHere) {
+            admissionStatus = 'guaranteed';
+          } else if (isPlacedElsewhere) {
+            const placedWish = entriesByChild.get(entry.childNum)!.find(e => e.schoolId === placedSchool)?.wishOrder ?? Infinity;
+            admissionStatus = entry.wishOrder > placedWish ? 'admitted-elsewhere' : 'impossible';
+          } else {
+            admissionStatus = 'impossible';
+          }
+
+          results.push({
+            childNum: entry.childNum,
+            name: entry.name,
+            schoolId: entry.schoolId,
+            schoolName: school?.nameStr ?? `Училище ${entry.schoolId}`,
+            schoolCapacity: school?.free ?? 0,
+            points: entry.points,
+            wishOrder: entry.wishOrder,
+            order: entry.order,
+            group: this.extractGroup(entry.displayText),
+            displayText: entry.displayText,
+            admitted: isPlacedHere,
+            admissionStatus,
+            chance: 0,
+          });
+        }
+      }
+
+      results.sort((a, b) => {
+        if (a.schoolName !== b.schoolName) return a.schoolName.localeCompare(b.schoolName, 'bg');
+        if (a.group !== b.group) return a.group - b.group;
+        if (a.points !== b.points) return b.points - a.points;
+        return a.name.localeCompare(b.name, 'bg');
+      });
+
+      this.admissionResults.set(results);
   }
 }

@@ -1,0 +1,8 @@
+node_modules
+dist
+.angular
+.git
+.vscode
+*.md
+*.log
+server/data/*.json

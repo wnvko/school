@@ -15,7 +15,6 @@ export class CollectData implements OnInit {
 
   selectedSchoolId = signal<number | null>(null);
 
-  /** Деца за избраното училище — по 1 ред на дете */
   schoolChildren = computed(() => {
     const schoolId = this.selectedSchoolId();
     if (schoolId === null) return [];
@@ -23,13 +22,21 @@ export class CollectData implements OnInit {
       .filter(r => r.schoolId === schoolId);
   });
 
-  /** Заглавие с брой приети / места */
   schoolHeader = computed(() => {
     const children = this.schoolChildren();
     if (children.length === 0) return '';
-    const admitted = children.filter(r => r.admitted).length;
-    return `Приети: ${admitted} / ${children[0].schoolCapacity} места`;
+    const guaranteed = children.filter(r => r.admissionStatus === 'guaranteed').length;
+    const chance = children.filter(r => r.admissionStatus === 'chance').length;
+    const elsewhere = children.filter(r => r.admissionStatus === 'admitted-elsewhere').length;
+    return `Гарантирани: ${guaranteed} | Шанс: ${chance} | Другаде: ${elsewhere} / ${children[0].schoolCapacity} места`;
   });
+
+  rowClasses: Record<string, (row: any) => boolean> = {
+    'row-guaranteed': (row) => row.data?.admissionStatus === 'guaranteed',
+    'row-elsewhere': (row) => row.data?.admissionStatus === 'admitted-elsewhere',
+    'row-chance': (row) => row.data?.admissionStatus === 'chance',
+    'row-impossible': (row) => row.data?.admissionStatus === 'impossible',
+  };
 
   ngOnInit(): void {
     this.dataService.fetchAndSimulate().subscribe();
@@ -41,5 +48,15 @@ export class CollectData implements OnInit {
 
   getChildWishes(childNum: number): AdmissionResult[] {
     return this.dataService.getChildAdmissions(childNum);
+  }
+
+  formatStatus(status: string, chance: number): string {
+    switch (status) {
+      case 'guaranteed': return '✔ Класиран';
+      case 'admitted-elsewhere': return '↗ Другаде';
+      case 'chance': return `⚄ Шанс ${chance}%`;
+      case 'impossible': return '✘ Не';
+      default: return status;
+    }
   }
 }

@@ -1,7 +1,7 @@
 {
   "/api": {
-    "target": "https://1klas.eu",
-    "secure": true,
+    "target": "http://localhost:3000",
+    "secure": false,
     "changeOrigin": true
   }
 }

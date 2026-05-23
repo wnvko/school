@@ -39,4 +39,16 @@ export interface AdmissionResult {
 
   /** Дали детето е прието в това училище при симулацията */
   admitted: boolean;
+
+  /**
+   * Статус на класирането:
+   * - 'guaranteed' — гарантирано прието в това училище (зелено)
+   * - 'admitted-elsewhere' — класирано в друго училище по по-предно желание (синьо)
+   * - 'chance' — има шанс за класиране (жълто)
+   * - 'impossible' — не може да се класира (червено)
+   */
+  admissionStatus: 'guaranteed' | 'admitted-elsewhere' | 'chance' | 'impossible';
+
+  /** Вероятност за класиране (0–100%), ако admissionStatus === 'chance' */
+  chance: number;
 }
