@@ -1,65 +1,13 @@
 import { HttpClient } from '@angular/common/http';
 import { inject, Injectable, signal } from '@angular/core';
 import { Observable, forkJoin, of } from 'rxjs';
-import { map, switchMap, tap } from 'rxjs/operators';
-
-export interface School {
-  id: number;
-  nameStr: string;
-  region: string;
-  free: number;
-  signed: number;
-  unsigned: number;
-  capacity: number;
-  available: number;
-}
-
-export interface OtherSchool {
-  schoolId: number;
-  points: number;
-  wishOrder: number;
-}
-
-export interface Child {
-  id: number;
-  schoolId: number;
-  childNum: number;
-  name: string;
-  displayText: string;
-  points: number;
-  wishOrder: number;
-  order: number;
-  otherSchools: OtherSchool[];
-}
-
-export interface AdmittedChild {
-  childNum: number;
-  name: string;
-  schoolId: number;
-  schoolName: string;
-  schoolCapacity: number;
-  points: number;
-  wishOrder: number;
-  order: number;
-  displayText: string;
-  admitted: boolean;
-}
-
-export interface ChildWish {
-  schoolId: number;
-  schoolName: string;
-  wishOrder: number;
-  points: number;
-  order: number;
-}
-
-interface SchoolsResponse {
-  items: School[];
-}
-
-interface ChildrenResponse {
-  items: Child[];
-}
+import { map, switchMap } from 'rxjs/operators';
+import {
+  School, SchoolsResponse,
+  Child, ChildrenResponse,
+  AdmissionResult,
+  ChildWish,
+} from './models';
 
 @Injectable({
   providedIn: 'root',
@@ -72,7 +20,8 @@ export class Data {
   private cachedEntries: Child[] | null = null;
 
   // Signal for admission results
-  admissionResults = signal<AdmittedChild[]>([]);
+  admissionResults = signal<AdmissionResult[]>([]);
+  schools = signal<{ id: number; name: string; free: number }[]>([]);
   uniqueChildren = signal<{ childNum: number; label: string }[]>([]);
   loading = signal(false);
 
@@ -100,7 +49,7 @@ export class Data {
     );
   }
 
-  fetchAndSimulate(): Observable<AdmittedChild[]> {
+  fetchAndSimulate(): Observable<AdmissionResult[]> {
     if (this.cachedEntries && this.cachedSchoolMap) {
       const results = this.simulateAdmission(this.cachedEntries, this.cachedSchoolMap);
       this.admissionResults.set(results);
@@ -110,6 +59,10 @@ export class Data {
     return this.getSchools().pipe(
       switchMap(schools => {
         this.cachedSchoolMap = new Map(schools.map(s => [s.id, s]));
+        this.schools.set(
+          schools.map(s => ({ id: s.id, name: s.nameStr, free: s.free }))
+            .sort((a, b) => a.name.localeCompare(b.name, 'bg'))
+        );
         return forkJoin(
           schools.map(school => this.getChildren(school.id))
         ).pipe(
@@ -149,7 +102,7 @@ export class Data {
       .sort((a, b) => a.wishOrder - b.wishOrder)
       .map(e => ({
         schoolId: e.schoolId,
-        schoolName: this.cachedSchoolMap!.get(e.schoolId)?.nameStr ?? `School ${e.schoolId}`,
+        schoolName: this.cachedSchoolMap!.get(e.schoolId)?.nameStr ?? `Училище ${e.schoolId}`,
         wishOrder: e.wishOrder,
         points: e.points,
         order: e.order,
@@ -161,8 +114,6 @@ export class Data {
 
     this.loading.set(true);
 
-    // newOrder is array of schoolIds in new wish order
-    // Update wishOrder for the target child's entries
     for (const schoolId of newOrder) {
       const entry = this.cachedEntries.find(
         e => e.childNum === childNum && e.schoolId === schoolId
@@ -172,7 +123,6 @@ export class Data {
       }
     }
 
-    // Re-run simulation async to allow loading indicator to render
     setTimeout(() => {
       const results = this.simulateAdmission(this.cachedEntries!, this.cachedSchoolMap!);
       this.admissionResults.set(results);
@@ -180,123 +130,154 @@ export class Data {
     });
   }
 
-  getAdmissionResults(): Observable<AdmittedChild[]> {
+  getAdmissionResults(): Observable<AdmissionResult[]> {
     return this.fetchAndSimulate();
   }
 
-  private simulateAdmission(
-    allEntries: Child[],
-    schoolMap: Map<number, School>
-  ): AdmittedChild[] {
-    // Group all entries by child (childNum)
-    const childEntries = new Map<number, Child[]>();
-    for (const entry of allEntries) {
-      const entries = childEntries.get(entry.childNum) ?? [];
-      entries.push(entry);
-      childEntries.set(entry.childNum, entries);
-    }
-
-    // For each child, sort their entries by wishOrder
-    for (const entries of childEntries.values()) {
-      entries.sort((a, b) => a.wishOrder - b.wishOrder);
-    }
-
-    // Find max wish order across all children
-    let maxWish = 0;
-    for (const entries of childEntries.values()) {
-      for (const e of entries) {
-        if (e.wishOrder > maxWish) maxWish = e.wishOrder;
-      }
-    }
-
-    // Initialize remaining capacity per school
-    const remainingCapacity = new Map<number, number>();
-    for (const [id, school] of schoolMap) {
-      remainingCapacity.set(id, school.free);
-    }
-
-    // Track admitted children: childNum -> AdmittedChild result
-    const admittedMap = new Map<number, AdmittedChild>();
-
-    // Process wish rounds: all wish-1 first, then wish-2, etc.
-    for (let wish = 1; wish <= maxWish; wish++) {
-      // Group unplaced children by school for this wish level
-      const schoolCandidates = new Map<number, Child[]>();
-
-      for (const [childNum, entries] of childEntries) {
-        if (admittedMap.has(childNum)) continue; // already placed
-        const entry = entries.find(e => e.wishOrder === wish);
-        if (!entry) continue; // no entry for this wish
-        const candidates = schoolCandidates.get(entry.schoolId) ?? [];
-        candidates.push(entry);
-        schoolCandidates.set(entry.schoolId, candidates);
-      }
-
-      // For each school, sort candidates by order (ascending = best ranked first)
-      // and admit until capacity is exhausted
-      for (const [schoolId, candidates] of schoolCandidates) {
-        candidates.sort((a, b) => a.order - b.order);
-        let remaining = remainingCapacity.get(schoolId) ?? 0;
-
-        for (const candidate of candidates) {
-          if (remaining <= 0) break;
-          if (admittedMap.has(candidate.childNum)) continue;
-
-          const school = schoolMap.get(schoolId);
-          admittedMap.set(candidate.childNum, {
-            childNum: candidate.childNum,
-            name: candidate.name,
-            schoolId: schoolId,
-            schoolName: school?.nameStr ?? `School ${schoolId}`,
-            schoolCapacity: school?.free ?? 0,
-            points: candidate.points,
-            wishOrder: candidate.wishOrder,
-            order: candidate.order,
-            displayText: candidate.displayText,
-            admitted: true,
-          });
-          remaining--;
-        }
-        remainingCapacity.set(schoolId, remaining);
-      }
-    }
-
-    // Collect results: admitted children + unadmitted children
-    const results: AdmittedChild[] = [...admittedMap.values()];
-
-    // Add unadmitted children (show with their first wish info)
-    for (const [childNum, entries] of childEntries) {
-      if (admittedMap.has(childNum)) continue;
-      const firstEntry = entries[0];
-      const school = schoolMap.get(firstEntry.schoolId);
-      results.push({
-        childNum: firstEntry.childNum,
-        name: firstEntry.name,
-        schoolId: firstEntry.schoolId,
-        schoolName: school?.nameStr ?? `School ${firstEntry.schoolId}`,
-        schoolCapacity: school?.free ?? 0,
-        points: firstEntry.points,
-        wishOrder: firstEntry.wishOrder,
-        order: firstEntry.order,
-        displayText: firstEntry.displayText,
-        admitted: false,
-      });
-    }
-
-    // Sort results by school, then by order within school
-    results.sort((a, b) => {
-      if (a.schoolName !== b.schoolName) return a.schoolName.localeCompare(b.schoolName, 'bg');
-      return a.order - b.order;
-    });
-
-    return results;
+  /** Връща всички желания на дете от резултатите, сортирани по wishOrder */
+  getChildAdmissions(childNum: number): AdmissionResult[] {
+    return this.admissionResults()
+      .filter(r => r.childNum === childNum)
+      .sort((a, b) => a.wishOrder - b.wishOrder);
   }
 
+  /**
+   * Извличане на номера на групата от displayText.
+   * Групите са от 1 (Първа) до 4 (Четвърта). Ако не се разпознае — връща 5.
+   */
   private extractGroup(displayText: string): number {
     if (displayText.includes('Първа група')) return 1;
     if (displayText.includes('Втора група')) return 2;
     if (displayText.includes('Трета група')) return 3;
     if (displayText.includes('Четвърта група')) return 4;
     return 5;
+  }
+
+  /**
+   * Симулация на класирането по алгоритъма от Наредбата
+   * (https://kg.sofia.bg/#/faq/114):
+   *
+   * 1. За ВСЯКО училище поотделно, кандидатите се подреждат по:
+   *    - Група (1→4, по-малка = по-висок приоритет)
+   *    - Точки от допълнителни критерии (низходящо)
+   *    - При равенство (гранична група) — по азбучен ред на името
+   *
+   * 2. Итеративно класиране:
+   *    - За всяко училище се приемат top-N кандидати, като се пропускат
+   *      вече класирани на по-високо желание деца.
+   *    - Ако дете се класира на по-високо желание, освобождава място
+   *      в по-ниското, което се запълва от следващия в реда.
+   *    - Повтаря се до стабилизиране.
+   *
+   * Резултатът съдържа ПО ЕДИН запис за ВСЯКО желание на ВСЯКО дете,
+   * с admitted=true/false за всяко.
+   */
+  private simulateAdmission(
+    allEntries: Child[],
+    schoolMap: Map<number, School>
+  ): AdmissionResult[] {
+    // Group entries by school
+    const entriesBySchool = new Map<number, Child[]>();
+    for (const entry of allEntries) {
+      const list = entriesBySchool.get(entry.schoolId) ?? [];
+      list.push(entry);
+      entriesBySchool.set(entry.schoolId, list);
+    }
+
+    // Sort candidates per school: group asc → points desc → name alphabetical (bg)
+    for (const [, entries] of entriesBySchool) {
+      entries.sort((a, b) => {
+        const groupA = this.extractGroup(a.displayText);
+        const groupB = this.extractGroup(b.displayText);
+        if (groupA !== groupB) return groupA - groupB;
+        if (a.points !== b.points) return b.points - a.points;
+        return a.name.localeCompare(b.name, 'bg');
+      });
+    }
+
+    // Group all entries by child for wish priority lookups
+    const entriesByChild = new Map<number, Child[]>();
+    for (const entry of allEntries) {
+      const list = entriesByChild.get(entry.childNum) ?? [];
+      list.push(entry);
+      entriesByChild.set(entry.childNum, list);
+    }
+
+    // Iterative placement: placed maps childNum -> schoolId
+    const placed = new Map<number, number>();
+
+    let changed = true;
+    while (changed) {
+      changed = false;
+
+      for (const [schoolId, candidates] of entriesBySchool) {
+        const capacity = schoolMap.get(schoolId)?.free ?? 0;
+        let spotsUsed = 0;
+
+        for (const candidate of candidates) {
+          if (spotsUsed >= capacity) break;
+
+          const existingSchoolId = placed.get(candidate.childNum);
+
+          if (existingSchoolId === schoolId) {
+            // Already placed here — count towards capacity
+            spotsUsed++;
+            continue;
+          }
+
+          if (existingSchoolId !== undefined) {
+            // Already placed at another school — compare wish orders
+            const childEntries = entriesByChild.get(candidate.childNum)!;
+            const thisWish = childEntries.find(e => e.schoolId === schoolId)?.wishOrder ?? Infinity;
+            const existingWish = childEntries.find(e => e.schoolId === existingSchoolId)?.wishOrder ?? Infinity;
+
+            if (thisWish >= existingWish) {
+              // Already at an equal or higher wish school — skip without using a spot
+              continue;
+            }
+
+            // This school is a higher wish — move child here
+            placed.set(candidate.childNum, schoolId);
+            spotsUsed++;
+            changed = true;
+          } else {
+            // Not placed anywhere — place here
+            placed.set(candidate.childNum, schoolId);
+            spotsUsed++;
+          }
+        }
+      }
+    }
+
+    // Build full results: one row per child-wish combination
+    const results: AdmissionResult[] = [];
+    for (const [childNum, entries] of entriesByChild) {
+      for (const entry of entries) {
+        const school = schoolMap.get(entry.schoolId);
+        results.push({
+          childNum: entry.childNum,
+          name: entry.name,
+          schoolId: entry.schoolId,
+          schoolName: school?.nameStr ?? `Училище ${entry.schoolId}`,
+          schoolCapacity: school?.free ?? 0,
+          points: entry.points,
+          wishOrder: entry.wishOrder,
+          order: entry.order,
+          group: this.extractGroup(entry.displayText),
+          displayText: entry.displayText,
+          admitted: placed.get(childNum) === entry.schoolId,
+        });
+      }
+    }
+
+    // Sort: by child name, then by wish order
+    results.sort((a, b) => {
+      if (a.schoolName !== b.schoolName) return a.schoolName.localeCompare(b.schoolName, 'bg');
+      if (a.group !== b.group) return a.group - b.group;
+      if (a.points !== b.points) return b.points - a.points;
+      return a.name.localeCompare(b.name, 'bg');
+    });
+
+    return results;
   }
 }

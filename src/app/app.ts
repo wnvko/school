@@ -9,7 +9,8 @@ import {
 import { IGX_SIMPLE_COMBO_DIRECTIVES, ISimpleComboSelectionChangingEventArgs } from '@infragistics/igniteui-angular/simple-combo';
 import { IgxButtonDirective, IgxRippleDirective, IgxIconButtonDirective } from '@infragistics/igniteui-angular/directives';
 import { IgxIconComponent } from '@infragistics/igniteui-angular/icon';
-import { ChildWish, Data } from './data';
+import { Data } from './data';
+import { ChildWish } from './models';
 
 @Component({
   selector: 'app-root',

@@ -1,13 +1,56 @@
-<igx-grid [data]="dataService.admissionResults()" [autoGenerate]="false" [allowFiltering]="true" [isLoading]="dataService.loading()">
-  <ng-template igxGroupByRow let-groupRow>
-    <span>{{ groupRow.value }} ({{ countAdmitted(groupRow.records) }}/{{ groupRow.records[0]?.schoolCapacity }})</span>
+<div class="school-selector">
+  <igx-simple-combo
+    [data]="dataService.schools()"
+    [displayKey]="'name'"
+    [valueKey]="'id'"
+    [disabled]="dataService.loading()"
+    placeholder="Изберете училище"
+    (selectionChanging)="onSchoolSelected($event)">
+  </igx-simple-combo>
+  @if (schoolHeader()) {
+    <span class="school-header">{{ schoolHeader() }}</span>
+  }
+</div>
+
+<igx-grid [data]="schoolChildren()" [autoGenerate]="false" [allowFiltering]="true"
+          [isLoading]="dataService.loading()" [primaryKey]="'childNum'">
+
+  <ng-template igxGridDetail let-dataItem>
+    <div class="child-details">
+      <h4>Желания на {{ dataItem.name }} ({{ dataItem.childNum }})</h4>
+      <table class="wishes-table">
+        <thead>
+          <tr>
+            <th>Желание №</th>
+            <th>Училище</th>
+            <th>Група</th>
+            <th>Точки</th>
+            <th>Класиране</th>
+            <th>Приет</th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (wish of getChildWishes(dataItem.childNum); track wish.schoolId) {
+            <tr [class.admitted-row]="wish.admitted">
+              <td>{{ wish.wishOrder }}</td>
+              <td>{{ wish.schoolName }}</td>
+              <td>{{ wish.group }}</td>
+              <td>{{ wish.points }}</td>
+              <td>{{ wish.order }}</td>
+              <td>{{ wish.admitted ? '✔ Да' : '✘ Не' }}</td>
+            </tr>
+          }
+        </tbody>
+      </table>
+    </div>
   </ng-template>
-  <igx-column [resizable]="true" field="schoolName" header="Училище" [groupable]="true"></igx-column>
+
   <igx-column [resizable]="true" field="name" header="Име"></igx-column>
   <igx-column [resizable]="true" field="childNum" header="Номер на дете"></igx-column>
+  <igx-column [resizable]="true" field="group" header="Група №" [dataType]="'number'"></igx-column>
   <igx-column [resizable]="true" field="points" header="Точки" [dataType]="'number'"></igx-column>
   <igx-column [resizable]="true" field="wishOrder" header="Желание №" [dataType]="'number'"></igx-column>
   <igx-column [resizable]="true" field="order" header="Класиране" [dataType]="'number'"></igx-column>
-  <igx-column [resizable]="true" field="displayText" header="Група"></igx-column>
+  <igx-column [resizable]="true" field="displayText" header="Описание на група"></igx-column>
   <igx-column [resizable]="true" field="admitted" header="Приет" [dataType]="'boolean'"></igx-column>
 </igx-grid>
